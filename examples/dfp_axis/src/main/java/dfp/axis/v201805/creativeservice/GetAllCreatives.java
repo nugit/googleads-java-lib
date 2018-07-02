@@ -50,15 +50,31 @@ public class GetAllCreatives {
    * @throws RemoteException if the API request failed due to other errors.
    */
   public static void runExample(DfpServices dfpServices, DfpSession session)
-      throws RemoteException {
+  throws RemoteException {
     // Get the CreativeService.
     CreativeServiceInterface creativeService =
-        dfpServices.get(session, CreativeServiceInterface.class);
+    dfpServices.get(session, CreativeServiceInterface.class);
+
+    String creativeTypeSubFilter = String.format("creativeType = %s", "ImageCreative");
+
+    // advertiserID is the platform UID of the datasource
+    String advertiserIdSubFilter = String.format("advertiserId = %s", "751815071");
+
+    // This needs to be retrieved from the
+    String[] creativeIdsArray = {"138230331327","138230331330","138230332206","138230332590","138230379977","138230380889","138230385146","138230385368","138230385371","138230386025","138230714167","138230714170","138230714173","138231410126","138231410165","138231731145","138231731877","138231810821","138231811019","138231811022","138231855280"};
+    String creativeIdSubFilter = "id = " + String.join(" or id = ", creativeIdsArray);
+    System.out.printf("sub filter: %s\n", creativeIdSubFilter);
+
 
     // Create a statement to get all creatives.
     StatementBuilder statementBuilder = new StatementBuilder()
-        .orderBy("id ASC")
-        .limit(StatementBuilder.SUGGESTED_PAGE_LIMIT);
+    .orderBy("id ASC")
+    .where(creativeTypeSubFilter)
+    .where(advertiserIdSubFilter)
+    .where(creativeIdSubFilter) // without this filter, we get all creatives under this advertiser
+    .limit(StatementBuilder.SUGGESTED_PAGE_LIMIT);
+
+    System.out.printf("Query statement: %s", statementBuilder.toStatement());
 
     // Default for total result set size.
     int totalResultSetSize = 0;
@@ -72,8 +88,8 @@ public class GetAllCreatives {
         int i = page.getStartIndex();
         for (Creative creative : page.getResults()) {
           System.out.printf(
-              "%d) Creative with ID %d and name '%s' was found.%n", i++,
-              creative.getId(), creative.getName());
+          "%d) Creative with ID %d and name '%s' and url '%s' was found.%n", i++,
+          creative.getId(), creative.getName(), creative.getPreviewUrl());
         }
       }
 
@@ -84,29 +100,45 @@ public class GetAllCreatives {
   }
 
   public static void main(String[] args) {
+    // ClientID, ClientSecret: from DAWC
+    // RefreshToken, Network Code: from auth_token endpoint: https://data.nugdev.co/v3/meta_data_sources/102548119667364157873---751815071/auth_token?secret=7eced64feb15491babc266ce12ea
+    // ApplicationName: doesn't really matter
+    String clientId = "";
+    String clientSecret = "";
+
+    // this needs to be refreshed every few mins
+    String refreshToken = "";
+
+    String applicationName = "";
+    String networkCode = "";
+
     DfpSession session;
     try {
+      System.out.printf("...Loading credentials...\n");
       // Generate a refreshable OAuth2 credential.
       Credential oAuth2Credential =
-          new OfflineCredentials.Builder().forApi(Api.DFP).fromFile().build().generateCredential();
-
+      new OfflineCredentials.Builder()
+      .forApi(Api.DFP)
+      .withClientSecrets(clientId, clientSecret)
+      .withRefreshToken(refreshToken)
+      .build()
+      .generateCredential();
+      System.out.printf("Creating session...\n");
       // Construct a DfpSession.
-      session = new DfpSession.Builder().fromFile().withOAuth2Credential(oAuth2Credential).build();
-    } catch (ConfigurationLoadException cle) {
-      System.err.printf(
-          "Failed to load configuration from the %s file. Exception: %s%n",
-          DEFAULT_CONFIGURATION_FILENAME, cle);
-      return;
+      session = new DfpSession.Builder()
+      .withApplicationName(applicationName)
+      .withNetworkCode(networkCode)
+      .withOAuth2Credential(oAuth2Credential).build();
     } catch (ValidationException ve) {
       System.err.printf(
-          "Invalid configuration in the %s file. Exception: %s%n",
-          DEFAULT_CONFIGURATION_FILENAME, ve);
+      "Invalid configuration in the %s file. Exception: %s%n",
+      DEFAULT_CONFIGURATION_FILENAME, ve);
       return;
     } catch (OAuthException oe) {
       System.err.printf(
-          "Failed to create OAuth credentials. Check OAuth settings in the %s file. "
-              + "Exception: %s%n",
-          DEFAULT_CONFIGURATION_FILENAME, oe);
+      "Failed to create OAuth credentials. Check OAuth settings in the %s file. "
+      + "Exception: %s%n",
+      DEFAULT_CONFIGURATION_FILENAME, oe);
       return;
     }
 

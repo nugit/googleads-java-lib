@@ -4,6 +4,9 @@
 modules/*/*.iml
 examples/*/*.iml
 
+*.jar
+*.class
+
 # Eclipse IDE files
 # See: https://github.com/github/gitignore/blob/master/Global/Eclipse.gitignore
 .factorypath
