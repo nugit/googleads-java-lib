@@ -16,6 +16,10 @@ package dfp.axis.v201805.creativeservice;
 
 import static com.google.api.ads.common.lib.utils.Builder.DEFAULT_CONFIGURATION_FILENAME;
 
+// basic shit
+import java.util.ArrayList;
+import java.util.List;
+
 import com.google.api.ads.common.lib.auth.OfflineCredentials;
 import com.google.api.ads.common.lib.auth.OfflineCredentials.Api;
 import com.google.api.ads.common.lib.conf.ConfigurationLoadException;
@@ -31,6 +35,20 @@ import com.google.api.ads.dfp.axis.v201805.CreativeServiceInterface;
 import com.google.api.ads.dfp.lib.client.DfpSession;
 import com.google.api.client.auth.oauth2.Credential;
 import java.rmi.RemoteException;
+
+// beam sdk libs
+import org.apache.beam.sdk.options.Default;
+import org.apache.beam.sdk.options.Description;
+import org.apache.beam.sdk.Pipeline;
+import org.apache.beam.sdk.options.PipelineOptions;
+import org.apache.beam.sdk.options.PipelineOptionsFactory;
+import org.apache.beam.sdk.options.Validation.Required;
+import org.apache.beam.sdk.transforms.PTransform;
+import org.apache.beam.sdk.values.PCollection;
+import org.apache.beam.sdk.values.KV;
+import org.apache.beam.sdk.transforms.Create;
+import org.apache.beam.sdk.io.TextIO;
+
 
 /**
  * This example gets all creatives. To create creatives, run
@@ -49,7 +67,7 @@ public class GetAllCreatives {
    * @throws ApiException if the API request failed with one or more service errors.
    * @throws RemoteException if the API request failed due to other errors.
    */
-  public static void runExample(DfpServices dfpServices, DfpSession session)
+  public static List<Creative> GetCreatives(DfpServices dfpServices, DfpSession session)
   throws RemoteException {
     // Get the CreativeService.
     CreativeServiceInterface creativeService =
@@ -79,6 +97,8 @@ public class GetAllCreatives {
     // Default for total result set size.
     int totalResultSetSize = 0;
 
+    List<Creative> results = new ArrayList<Creative>();
+
     do {
       // Get creatives by statement.
       CreativePage page = creativeService.getCreativesByStatement(statementBuilder.toStatement());
@@ -90,6 +110,7 @@ public class GetAllCreatives {
           System.out.printf(
           "%d) Creative with ID %d and name '%s' and url '%s' was found.%n", i++,
           creative.getId(), creative.getName(), creative.getPreviewUrl());
+          results.add(creative);
         }
       }
 
@@ -97,72 +118,122 @@ public class GetAllCreatives {
     } while (statementBuilder.getOffset() < totalResultSetSize);
 
     System.out.printf("Number of results found: %d%n", totalResultSetSize);
+    return results;
+  }
+
+
+  public interface MyOptions extends PipelineOptions {
+    /**
+     * By default, this example reads from a public dataset containing the text of
+     * King Lear. Set this option to choose a different input file or glob.
+     */
+    @Description("Path of the file to read from")
+    @Default.String("gs://apache-beam-samples/shakespeare/kinglear.txt")
+    @Required
+    String getInputFile();
+    void setInputFile(String value);
+
+    /**
+     * Set this required option to specify where to write the output.
+     */
+    @Description("Path of the file to write to")
+    @Required
+    String getOutput();
+    void setOutput(String value);
+  }
+
+  public static class DFP_Query extends PTransform<PCollection<String>, PCollection<String>>
+  {
+    @Override
+    public PCollection<String> expand(PCollection<String> credentials)
+    {
+      System.out.printf("--- credentials: %s", credentials);
+
+      // ClientID, ClientSecret: from DAWC
+      // RefreshToken, Network Code: from auth_token endpoint: https://data.nugdev.co/v3/meta_data_sources/102548119667364157873---751815071/auth_token?secret=7eced64feb15491babc266ce12ea
+      // ApplicationName: doesn't really matter
+      String clientId = "";
+      String clientSecret = "";
+      // this needs to be refreshed every few mins
+      String refreshToken = "";
+      String applicationName = "Nugit";
+      String networkCode = "5129";
+      // ^^^ expected to have the above credentials as a map, in the PCollection<KV<string, string>>
+
+
+      // Instantiate DfpSession, DfpServices. Then make the query
+      DfpSession session = null;
+      try {
+        System.out.printf("Loading credentials...\n");
+        // Generate a refreshable OAuth2 credential.
+        Credential oAuth2Credential =
+        new OfflineCredentials.Builder()
+        .forApi(Api.DFP)
+        .withClientSecrets(clientId, clientSecret)
+        .withRefreshToken(refreshToken)
+        .build()
+        .generateCredential();
+        System.out.printf("Creating session...\n");
+        // Construct a DfpSession.
+        session = new DfpSession.Builder()
+        .withApplicationName(applicationName)
+        .withNetworkCode(networkCode)
+        .withOAuth2Credential(oAuth2Credential).build();
+      } catch (ValidationException ve) {
+        System.err.printf(
+        "Invalid configuration in the %s file. Exception: %s%n",
+        DEFAULT_CONFIGURATION_FILENAME, ve);
+      } catch (OAuthException oe) {
+        System.err.printf(
+        "Failed to create OAuth credentials. Check OAuth settings in the %s file. "
+        + "Exception: %s%n",
+        DEFAULT_CONFIGURATION_FILENAME, oe);
+      }
+
+      DfpServices service = new DfpServices();
+
+      try {
+        List<Creative> creatives = GetCreatives(service, session);
+      } catch (ApiException apiException) {
+        // ApiException is the base class for most exceptions thrown by an API request. Instances
+        // of this exception have a message and a collection of ApiErrors that indicate the
+        // type and underlying cause of the exception. Every exception object in the dfp.axis
+        // packages will return a meaningful value from toString
+        //
+        // ApiException extends RemoteException, so this catch block must appear before the
+        // catch block for RemoteException.
+        System.err.println("Request failed due to ApiException. Underlying ApiErrors:");
+        if (apiException.getErrors() != null) {
+          int i = 0;
+          for (ApiError apiError : apiException.getErrors()) {
+            System.err.printf("  Error %d: %s%n", i++, apiError);
+          }
+        }
+      } catch (RemoteException re) {
+        System.err.printf("Request failed unexpectedly due to RemoteException: %s%n", re);
+      }
+
+      // convert dfp_data into a PCollection
+      //PCollection<KV<String, String>> c;
+      // ...
+      return credentials;
+
+    }
   }
 
   public static void main(String[] args) {
-    // ClientID, ClientSecret: from DAWC
-    // RefreshToken, Network Code: from auth_token endpoint: https://data.nugdev.co/v3/meta_data_sources/102548119667364157873---751815071/auth_token?secret=7eced64feb15491babc266ce12ea
-    // ApplicationName: doesn't really matter
-    String clientId = "";
-    String clientSecret = "";
+    MyOptions options = PipelineOptionsFactory.fromArgs(args).withValidation().as(MyOptions.class);
+    System.out.printf("input file: %s\n", options.getInputFile());
+    System.out.printf("output file: %s\n", options.getOutput());
 
-    // this needs to be refreshed every few mins
-    String refreshToken = "";
+    Pipeline p = Pipeline.create(options);
 
-    String applicationName = "";
-    String networkCode = "";
+    p.apply("GetInput", TextIO.read().from(options.getInputFile()))
+     .apply(new DFP_Query())
+     // normalize data depending on our agreed convention
+     .apply("WriteOutput", TextIO.write().to(options.getOutput()));
 
-    DfpSession session;
-    try {
-      System.out.printf("...Loading credentials...\n");
-      // Generate a refreshable OAuth2 credential.
-      Credential oAuth2Credential =
-      new OfflineCredentials.Builder()
-      .forApi(Api.DFP)
-      .withClientSecrets(clientId, clientSecret)
-      .withRefreshToken(refreshToken)
-      .build()
-      .generateCredential();
-      System.out.printf("Creating session...\n");
-      // Construct a DfpSession.
-      session = new DfpSession.Builder()
-      .withApplicationName(applicationName)
-      .withNetworkCode(networkCode)
-      .withOAuth2Credential(oAuth2Credential).build();
-    } catch (ValidationException ve) {
-      System.err.printf(
-      "Invalid configuration in the %s file. Exception: %s%n",
-      DEFAULT_CONFIGURATION_FILENAME, ve);
-      return;
-    } catch (OAuthException oe) {
-      System.err.printf(
-      "Failed to create OAuth credentials. Check OAuth settings in the %s file. "
-      + "Exception: %s%n",
-      DEFAULT_CONFIGURATION_FILENAME, oe);
-      return;
-    }
+    p.run().waitUntilFinish();
 
-    DfpServices dfpServices = new DfpServices();
-
-    try {
-      runExample(dfpServices, session);
-    } catch (ApiException apiException) {
-      // ApiException is the base class for most exceptions thrown by an API request. Instances
-      // of this exception have a message and a collection of ApiErrors that indicate the
-      // type and underlying cause of the exception. Every exception object in the dfp.axis
-      // packages will return a meaningful value from toString
-      //
-      // ApiException extends RemoteException, so this catch block must appear before the
-      // catch block for RemoteException.
-      System.err.println("Request failed due to ApiException. Underlying ApiErrors:");
-      if (apiException.getErrors() != null) {
-        int i = 0;
-        for (ApiError apiError : apiException.getErrors()) {
-          System.err.printf("  Error %d: %s%n", i++, apiError);
-        }
-      }
-    } catch (RemoteException re) {
-      System.err.printf("Request failed unexpectedly due to RemoteException: %s%n", re);
-    }
   }
 }
