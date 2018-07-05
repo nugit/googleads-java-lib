@@ -47,7 +47,11 @@ import org.apache.beam.sdk.transforms.PTransform;
 import org.apache.beam.sdk.values.PCollection;
 import org.apache.beam.sdk.values.KV;
 import org.apache.beam.sdk.transforms.Create;
+import org.apache.beam.sdk.transforms.DoFn;
+import org.apache.beam.sdk.transforms.ParDo;
 import org.apache.beam.sdk.io.TextIO;
+import org.apache.beam.sdk.transforms.Count;
+import org.apache.beam.sdk.testing.PAssert;
 
 
 /**
@@ -142,24 +146,25 @@ public class GetAllCreatives {
     void setOutput(String value);
   }
 
-  public static class DFP_Query extends PTransform<PCollection<String>, PCollection<String>>
+  // The DoFn to perform on each element in the input PCollection.
+  static class DoAuthAndExtract extends DoFn<String, String>
   {
-    @Override
-    public PCollection<String> expand(PCollection<String> credentials)
-    {
-      System.out.printf("--- credentials: %s", credentials);
+    @ProcessElement
+    public void processElement(ProcessContext c) {
+      // Get the input element from ProcessContext.
+      String word = c.element();
+      String[] parts = word.split(",");
+      String clientId = parts[0];
+      String clientSecret = parts[1];
+      String refreshToken = parts[2];
+      String applicationName = parts[3];
+      String networkCode = parts[4];
 
-      // ClientID, ClientSecret: from DAWC
-      // RefreshToken, Network Code: from auth_token endpoint: https://data.nugdev.co/v3/meta_data_sources/102548119667364157873---751815071/auth_token?secret=7eced64feb15491babc266ce12ea
-      // ApplicationName: doesn't really matter
-      String clientId = "";
-      String clientSecret = "";
-      // this needs to be refreshed every few mins
-      String refreshToken = "";
-      String applicationName = "Nugit";
-      String networkCode = "5129";
-      // ^^^ expected to have the above credentials as a map, in the PCollection<KV<string, string>>
-
+      System.out.printf("clientId: %s", clientId);
+      System.out.printf("clientSecret: %s", clientSecret);
+      System.out.printf("refreshToken: %s", refreshToken);
+      System.out.printf("applicationName: %s", applicationName);
+      System.out.printf("networkCode: %s", networkCode);
 
       // Instantiate DfpSession, DfpServices. Then make the query
       DfpSession session = null;
@@ -194,6 +199,7 @@ public class GetAllCreatives {
 
       try {
         List<Creative> creatives = GetCreatives(service, session);
+        c.output(String.valueOf(creatives.size()));
       } catch (ApiException apiException) {
         // ApiException is the base class for most exceptions thrown by an API request. Instances
         // of this exception have a message and a collection of ApiErrors that indicate the
@@ -212,12 +218,17 @@ public class GetAllCreatives {
       } catch (RemoteException re) {
         System.err.printf("Request failed unexpectedly due to RemoteException: %s%n", re);
       }
+    }
+  }
 
-      // convert dfp_data into a PCollection
-      //PCollection<KV<String, String>> c;
-      // ...
-      return credentials;
-
+  public static class DFP_Query extends PTransform<PCollection<String>, PCollection<String>>
+  {
+    @Override
+    public PCollection<String> expand(PCollection<String> credentials)
+    {
+      System.out.printf("--- credentials: %s\n", credentials);
+      PCollection<String> raw_data = credentials.apply(ParDo.of(new DoAuthAndExtract()));
+      return raw_data;
     }
   }
 
@@ -227,6 +238,12 @@ public class GetAllCreatives {
     System.out.printf("output file: %s\n", options.getOutput());
 
     Pipeline p = Pipeline.create(options);
+
+    // assert that input is not empty
+    PCollection<Long> count = p.apply("GetInput", TextIO.read().from(options.getInputFile()))
+                                 .apply(Count.<String>globally());
+    Long expectedNumEntities = 1L;
+    PAssert.thatSingleton(count).isEqualTo(expectedNumEntities);
 
     p.apply("GetInput", TextIO.read().from(options.getInputFile()))
      .apply(new DFP_Query())
